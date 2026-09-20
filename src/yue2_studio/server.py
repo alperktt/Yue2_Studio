@@ -41,7 +41,7 @@ def _unsupported_json(value):
 
 class StudioServer(ThreadingHTTPServer):
     daemon_threads = True
-    allow_reuse_address = True
+    allow_reuse_address = False
 
     def server_bind(self):
         if os.name == 'nt':

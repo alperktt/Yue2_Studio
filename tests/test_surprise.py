@@ -143,5 +143,46 @@ class SurpriseTests(unittest.TestCase):
             restored=SurpriseManager(jobs,threading.Lock())
             self.assertEqual(restored.list()[0]['status'],'interrupted')
 
+    def test_instrumental_surprise_produces_empty_lyrics_and_cot_off(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs=JobManager(tmp,start=False);manager=SurpriseManager(jobs,threading.Lock())
+            calls=[]
+            def generate(payload):
+                calls.append(payload)
+                job=jobs._add('generation',payload)
+                jobs.jobs[job['id']]['status']='complete'
+                return job
+            result={'draft':{'title':'Instrumental Odyssey','lyrics':'[Verse]\nIgnore this text','style':'ambient neoclassical piano'}}
+            with patch('yue2_studio.surprise.llm.assist',return_value=result),patch.object(jobs,'generate',side_effect=generate):
+                batch=manager.start(options(count=1,voice='instrumental',cot='full'))
+                manager.threads[batch['id']].join(5)
+            self.assertEqual(manager.list()[0]['status'],'complete')
+            self.assertEqual(len(calls),1)
+            req=calls[0]['request']
+            self.assertEqual(req['lyrics'],'')
+            self.assertEqual(req['cot'],'off')
+            self.assertTrue(req['style'].startswith('pure instrumental, '))
+            self.assertNotIn('no vocals',req['style'])
+
+    def test_vocal_surprise_retains_lyrics_and_cot_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs=JobManager(tmp,start=False);manager=SurpriseManager(jobs,threading.Lock())
+            calls=[]
+            def generate(payload):
+                calls.append(payload)
+                job=jobs._add('generation',payload)
+                jobs.jobs[job['id']]['status']='complete'
+                return job
+            result={'draft':{'title':'Vocal Song','lyrics':'[Verse]\nSung lyric line','style':'acoustic pop'}}
+            with patch('yue2_studio.surprise.llm.assist',return_value=result),patch.object(jobs,'generate',side_effect=generate):
+                batch=manager.start(options(count=1,voice='female',cot='full'))
+                manager.threads[batch['id']].join(5)
+            self.assertEqual(manager.list()[0]['status'],'complete')
+            self.assertEqual(len(calls),1)
+            req=calls[0]['request']
+            self.assertEqual(req['lyrics'],'[Verse]\nSung lyric line')
+            self.assertEqual(req['cot'],'full')
+            self.assertTrue(req['style'].startswith('Female lead vocal. '))
+
 
 if __name__=='__main__':unittest.main()

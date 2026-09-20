@@ -271,28 +271,61 @@ def strip_chords(text: str, keep_voice="both") -> str:
     source = parse(text)
     lines = text.splitlines(keepends=True)
     if keep_voice == "convert_vocal_to_ins":
-        # First strip chords
-        for index in source.music_lines:
-            lines[index] = TOKEN.sub(lambda m: "" if m.group("chord") is not None else m.group(0), lines[index])
-        # Cleaned source
-        cleaned_source = parse("".join(lines))
-        vocal_indices = [idx for idx, name in cleaned_source.music_lines.items() if name == "Vocal"]
-        ins_indices = [idx for idx, name in cleaned_source.music_lines.items() if name == "Ins"]
+        vocal_indices = [idx for idx, name in source.music_lines.items() if name == "Vocal"]
+        ins_indices = [idx for idx, name in source.music_lines.items() if name == "Ins"]
         for v_idx, ins_idx in zip(vocal_indices, ins_indices):
-            v_line = lines[v_idx]
-            ins_line = lines[ins_idx]
-            # Silence vocal line into rests
-            v_silenced = TOKEN.sub(lambda m: ("z" + m.group("duration")) if m.group("note") else m.group(0), v_line)
-            # Check if Ins was resting
-            ins_notes = [m.group("note") for m in TOKEN.finditer(ins_line) if m.group("note") and m.group("note") != "z"]
-            if not ins_notes:
-                lines[ins_idx] = v_line
-                lines[v_idx] = v_silenced
-            else:
-                lines[v_idx] = v_silenced
+            v_line_str = lines[v_idx].rstrip("\r\n")
+            ins_line_str = lines[ins_idx].rstrip("\r\n")
+            line_ending = "\r\n" if lines[v_idx].endswith("\r\n") else "\n"
+
+            def expand_bars(line_str):
+                expanded = []
+                for b in line_str[:-1].split("|"):
+                    b = b.strip()
+                    rest = re.fullmatch(r"Z([2-4])?", b)
+                    if rest:
+                        expanded.extend(["Z"] * int(rest.group(1) or "1"))
+                    else:
+                        expanded.append(b)
+                return expanded
+
+            v_bars = expand_bars(v_line_str)
+            ins_bars = expand_bars(ins_line_str)
+            fail(len(v_bars) != len(ins_bars), "Voices have different measure counts in music line")
+
+            new_v_bars = []
+            new_ins_bars = []
+            for vb, ib in zip(v_bars, ins_bars):
+                # Remove chord annotations from vocal measure
+                vb_clean = TOKEN.sub(lambda m: "" if m.group("chord") is not None else m.group(0), vb)
+                # Silence vocal measure by replacing notes with rests (retaining duration and Z bars)
+                vb_silenced = "Z" if vb_clean == "Z" else TOKEN.sub(
+                    lambda m: ("z" + m.group("duration")) if m.group("note") else m.group(0), vb_clean
+                )
+                # Check if Ins measure has sounding notes
+                ib_has_notes = False
+                if ib != "Z":
+                    for m in TOKEN.finditer(ib):
+                        if m.group("note") and m.group("note") != "z":
+                            ib_has_notes = True
+                            break
+
+                if not ib_has_notes:
+                    # Ins was resting; receive vocal melody
+                    new_ins_bars.append(vb_clean)
+                    new_v_bars.append(vb_silenced)
+                else:
+                    # Ins had sounding notes; retain Ins, silence Vocal
+                    new_ins_bars.append(ib)
+                    new_v_bars.append(vb_silenced)
+
+            lines[v_idx] = "|".join(new_v_bars) + "|" + line_ending
+            lines[ins_idx] = "|".join(new_ins_bars) + "|" + line_ending
+
         output = "".join(lines)
         result = parse(output)
         fail(any(v.chords for v in result.voices.values()), "Chord removal left a chord symbol")
+        fail(bool(result.voices["Vocal"].notes), "Vocal voice was not silenced")
         return output
 
     for index, name in source.music_lines.items():

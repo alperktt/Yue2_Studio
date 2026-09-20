@@ -342,6 +342,36 @@ class HTTPTests(unittest.TestCase):
         with self.request('/api/bootstrap') as response:self.assertIn('groups',json.load(response))
         with self.request('/api/score',{'abc':ABC,'strip':True}) as response:
             data=json.load(response);self.assertEqual(data['report']['bpm'],120)
+
+    def test_pure_instrumental_cover_score_conversion(self):
+        # 1. Fully resting Ins receives vocal melody
+        full_rest_abc = 'X:1\nT:\nM:4/4\nL:1/32\nQ:1/4=120\nV: Vocal clef=treble name="Vocal Melody" snm="Vocal"\nV: Ins clef=treble name="Ins Melody" snm="Inst."\nK:C\n% verse\nV: Vocal\n"C"C8D8"G"E8G8|\nV: Ins\nZ|\n'
+        with self.request('/api/score',{'abc':full_rest_abc,'strip':True,'keep_voice':'convert_vocal_to_ins'}) as response:
+            data=json.load(response)
+            self.assertEqual(data['report']['voices']['Vocal']['sounding_notes'],0)
+            self.assertEqual(data['report']['voices']['Ins']['sounding_notes'],4)
+            self.assertEqual(data['report']['voices']['Vocal']['chords'],[])
+            self.assertEqual(data['report']['voices']['Ins']['chords'],[])
+
+        # 2. Mixed resting and sounding Ins measures convert per-measure
+        mixed_abc = 'X:1\nT:\nM:4/4\nL:1/32\nQ:1/4=120\nV: Vocal clef=treble name="Vocal Melody" snm="Vocal"\nV: Ins clef=treble name="Ins Melody" snm="Inst."\nK:C\n% verse\nV: Vocal\n"C"C32|D32|\nV: Ins\nZ|E32|\n'
+        with self.request('/api/score',{'abc':mixed_abc,'strip':True,'keep_voice':'convert_vocal_to_ins'}) as response:
+            data=json.load(response)
+            # Vocal silenced into rests
+            self.assertEqual(data['report']['voices']['Vocal']['sounding_notes'],0)
+            # Ins measure 1 got C32 from Vocal, measure 2 kept existing E32
+            ins_notes=data['report']['voices']['Ins']['notes']
+            self.assertEqual(len(ins_notes),2)
+            self.assertEqual(ins_notes[0]['midi_pitch'],60) # C4
+            self.assertEqual(ins_notes[1]['midi_pitch'],64) # E4
+            self.assertIn('z32|z32|',data['abc'])
+            self.assertIn('C32|E32|',data['abc'])
+
+        # 3. HTML keep both melodies remains the UI default (no selected on convert_vocal_to_ins)
+        html_path = ROOT / 'src/yue2_studio/static/index.html'
+        html_text = html_path.read_text(encoding='utf-8')
+        self.assertIn('<option value="convert_vocal_to_ins">Pure Instrumental Cover (Move Vocal to Instrument)</option>', html_text)
+        self.assertNotIn('<option value="convert_vocal_to_ins" selected>', html_text)
     def test_csrf_and_cross_origin_rejected(self):
         for headers in ({'X-Studio-Token':''},{'Origin':'https://evil.invalid'},{'Host':'evil.invalid'}):
             with self.assertRaises(urllib.error.HTTPError) as ctx:self.request('/api/generate',payload(),headers)
