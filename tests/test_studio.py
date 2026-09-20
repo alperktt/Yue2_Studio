@@ -367,7 +367,15 @@ class HTTPTests(unittest.TestCase):
             self.assertIn('z32|z32|',data['abc'])
             self.assertIn('C32|E32|',data['abc'])
 
-        # 3. HTML keep both melodies remains the UI default (no selected on convert_vocal_to_ins)
+        # 3. Cross-measure ties: preserved when consecutive resting bars, stripped cleanly when transitioning to sounding Ins
+        tie_abc = 'X:1\nT:\nM:4/4\nL:1/32\nQ:1/4=120\nV: Vocal clef=treble name="Vocal Melody" snm="Vocal"\nV: Ins clef=treble name="Ins Melody" snm="Inst."\nK:C\n% verse\nV: Vocal\nC32-|C32|\nV: Ins\nZ|E32|\n'
+        with self.request('/api/score',{'abc':tie_abc,'strip':True,'keep_voice':'convert_vocal_to_ins'}) as response:
+            data=json.load(response)
+            self.assertEqual(data['report']['voices']['Vocal']['sounding_notes'],0)
+            self.assertEqual(data['report']['voices']['Ins']['sounding_notes'],2)
+            self.assertIn('C32|E32|',data['abc'])
+
+        # 4. HTML keep both melodies remains the UI default (no selected on convert_vocal_to_ins)
         html_path = ROOT / 'src/yue2_studio/static/index.html'
         html_text = html_path.read_text(encoding='utf-8')
         self.assertIn('<option value="convert_vocal_to_ins">Pure Instrumental Cover (Move Vocal to Instrument)</option>', html_text)
